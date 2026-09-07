@@ -1,0 +1,11 @@
+{
+  "name": "upwork-bidder-tracker-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Employee Activity & Bidder Performance Tracker Ecosystem (Manifest V3 Chrome Extension + Next.js Admin Dashboard)",
+  "scripts": {
+    "dev": "npm --prefix dashboard run dev",
+    "build": "npm --prefix dashboard run build",
+    "start": "npm --prefix dashboard run start"
+  }
+}

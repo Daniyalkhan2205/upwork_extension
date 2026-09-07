@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Bidder Activity & Performance Tracker",
+  "version": "1.0.0",
+  "description": "Employee activity tracking & bidder performance monitoring for Upwork/Fiverr with 3-minute idle detection, offline queueing, and webhook notifications.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "idle",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Bidder Activity Tracker",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
