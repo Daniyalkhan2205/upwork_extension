@@ -257,7 +257,7 @@ async function getActiveContext() {
  * 1-Minute Heartbeat telemetry engine
  */
 async function processHeartbeatInterval() {
-  const store = await chrome.storage.local.get(["session", "config", "todayMetrics", "offlineQueue"]);
+  const store = await chrome.storage.local.get(["session", "config", "todayMetrics", "offlineQueue", "lastHeartbeatTime"]);
   const session = store.session;
 
   // If user is not clocked in, do not log session metrics
@@ -290,6 +290,20 @@ async function processHeartbeatInterval() {
     todayMetrics.subpathBreakdown = { searchJobs: 0, proposals: 0, messages: 0, jobDetails: 0, otherUpwork: 0 };
   }
 
+  const now = Date.now();
+  const sessionStartTime = new Date(session.clockInTime).getTime();
+  const lastTime = (store.lastHeartbeatTime && store.lastHeartbeatTime >= sessionStartTime)
+    ? store.lastHeartbeatTime
+    : sessionStartTime;
+
+  const elapsedMs = now - lastTime;
+  let sliceSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+
+  // If no measurable time elapsed (< 1s), skip to prevent artificial inflation
+  if (sliceSeconds <= 0) {
+    return;
+  }
+
   // Check idle state via chrome.idle queryState (180 seconds threshold)
   const idleThreshold = config.idleThresholdSeconds || 180;
   const idleState = await new Promise((resolve) => {
@@ -299,38 +313,52 @@ async function processHeartbeatInterval() {
   const isIdle = idleState === "idle" || idleState === "locked";
   const context = await getActiveContext();
 
-  // 1 heartbeat slice = 60 seconds
-  const SLICE_SECONDS = 60;
-  todayMetrics.clockedSeconds += SLICE_SECONDS;
-  session.totalClockedSeconds = (session.totalClockedSeconds || 0) + SLICE_SECONDS;
+  // Cap active slice if computer was suspended or inactive longer than idle threshold
+  if (!isIdle && sliceSeconds > idleThreshold) {
+    sliceSeconds = idleThreshold;
+  }
+
+  // Session clocked seconds is strictly the true elapsed clock time
+  const totalSessionElapsed = Math.max(0, Math.floor((now - sessionStartTime) / 1000));
+  session.totalClockedSeconds = totalSessionElapsed;
+  todayMetrics.clockedSeconds += sliceSeconds;
 
   let effectiveCategory = context.category;
 
-  // Idle is determined strictly by chrome.idle API (3-minute inactivity threshold)
+  // Idle is determined strictly by chrome.idle API
   if (isIdle) {
-    todayMetrics.idleSeconds += SLICE_SECONDS;
-    session.totalIdleSeconds = (session.totalIdleSeconds || 0) + SLICE_SECONDS;
+    todayMetrics.idleSeconds += sliceSeconds;
+    session.totalIdleSeconds = (session.totalIdleSeconds || 0) + sliceSeconds;
     effectiveCategory = "idle";
   } else {
-    todayMetrics.activeSeconds += SLICE_SECONDS;
-    session.totalActiveSeconds = (session.totalActiveSeconds || 0) + SLICE_SECONDS;
+    todayMetrics.activeSeconds += sliceSeconds;
+    session.totalActiveSeconds = (session.totalActiveSeconds || 0) + sliceSeconds;
 
     if (context.category === "work_upwork") {
-      todayMetrics.upworkSeconds += SLICE_SECONDS;
-      session.totalUpworkSeconds = (session.totalUpworkSeconds || 0) + SLICE_SECONDS;
+      todayMetrics.upworkSeconds += sliceSeconds;
+      session.totalUpworkSeconds = (session.totalUpworkSeconds || 0) + sliceSeconds;
       if (context.upworkSection && todayMetrics.subpathBreakdown[context.upworkSection] !== undefined) {
-        todayMetrics.subpathBreakdown[context.upworkSection] += SLICE_SECONDS;
+        todayMetrics.subpathBreakdown[context.upworkSection] += sliceSeconds;
       }
     } else if (context.category === "work_other") {
-      todayMetrics.otherWorkSeconds += SLICE_SECONDS;
-      session.totalOtherWorkSeconds = (session.totalOtherWorkSeconds || 0) + SLICE_SECONDS;
+      todayMetrics.otherWorkSeconds += sliceSeconds;
+      session.totalOtherWorkSeconds = (session.totalOtherWorkSeconds || 0) + sliceSeconds;
     } else {
-      todayMetrics.nonWorkSeconds += SLICE_SECONDS;
-      session.totalNonWorkSeconds = (session.totalNonWorkSeconds || 0) + SLICE_SECONDS;
+      todayMetrics.nonWorkSeconds += sliceSeconds;
+      session.totalNonWorkSeconds = (session.totalNonWorkSeconds || 0) + sliceSeconds;
     }
   }
 
-  await chrome.storage.local.set({ session, todayMetrics, lastHeartbeatTime: Date.now() });
+  // Strict mathematical guarantees: sub-metrics can never exceed clocked seconds
+  session.totalActiveSeconds = Math.min(session.totalActiveSeconds, session.totalClockedSeconds);
+  session.totalIdleSeconds   = Math.min(session.totalIdleSeconds, session.totalClockedSeconds);
+  session.totalUpworkSeconds = Math.min(session.totalUpworkSeconds, session.totalActiveSeconds);
+
+  // Today metrics bounds
+  todayMetrics.upworkSeconds = Math.min(todayMetrics.upworkSeconds, todayMetrics.clockedSeconds);
+  todayMetrics.idleSeconds   = Math.min(todayMetrics.idleSeconds, todayMetrics.clockedSeconds);
+
+  await chrome.storage.local.set({ session, todayMetrics, lastHeartbeatTime: now });
 
   // Prepare telemetry payload
   const telemetryPacket = {
@@ -344,7 +372,7 @@ async function processHeartbeatInterval() {
     subpath: context.subpath,
     category: effectiveCategory,
     upworkSection: context.upworkSection,
-    sliceSeconds: SLICE_SECONDS,
+    sliceSeconds,
     sessionTotals: {
       clocked: session.totalClockedSeconds,
       active: session.totalActiveSeconds,
@@ -498,7 +526,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         totalNonWorkSeconds: 0
       };
 
-      await chrome.storage.local.set({ session: newSession });
+      await chrome.storage.local.set({ 
+        session: newSession, 
+        lastHeartbeatTime: now.getTime() 
+      });
+
+      // Align 1-minute recurring alarm starting exactly 1 minute from now
+      chrome.alarms.create("HEARTBEAT_ALARM", {
+        delayInMinutes: 1,
+        periodInMinutes: 1
+      });
 
       // Notify backend & manager via webhook
       try {
@@ -516,37 +553,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       await dispatchWebhookNotification("clock_in", newSession, config);
 
-      // Trigger initial heartbeat check after 3 seconds so metrics show active site immediately
-      setTimeout(async () => {
-        const check = await chrome.storage.local.get("session");
-        if (check.session && check.session.status === "active") {
-          await processHeartbeatInterval();
-        }
-      }, 3000);
+      // Immediately prime current tab context without adding false time
+      await getActiveContext();
 
       sendResponse({ success: true, session: newSession });
     } else if (request.type === "CLOCK_OUT") {
       const session = store.session;
       if (session) {
-        session.clockOutTime = new Date().toISOString();
-        session.status = "completed";
+        // Capture trailing seconds between last heartbeat and clock-out
+        await processHeartbeatInterval();
+        chrome.alarms.clear("HEARTBEAT_ALARM");
 
-        await chrome.storage.local.set({ session: null });
+        const updatedStore = await chrome.storage.local.get("session");
+        const finalSession = updatedStore.session || session;
+        finalSession.clockOutTime = new Date().toISOString();
+        finalSession.status = "completed";
+
+        await chrome.storage.local.set({ session: null, lastHeartbeatTime: null });
 
         try {
           await fetch(`${config.apiBaseUrl}/session/clock-out`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(session)
+            body: JSON.stringify(finalSession)
           });
         } catch (err) {
           console.warn("Clock-out offline, saving to offline queue");
           const q = (await chrome.storage.local.get("offlineQueue")).offlineQueue || [];
-          q.push({ type: "clock_out", data: session, queuedAt: Date.now() });
+          q.push({ type: "clock_out", data: finalSession, queuedAt: Date.now() });
           await chrome.storage.local.set({ offlineQueue: q });
         }
 
-        await dispatchWebhookNotification("clock_out", session, config);
+        await dispatchWebhookNotification("clock_out", finalSession, config);
       }
       sendResponse({ success: true });
     } else if (request.type === "FORCE_HEARTBEAT") {
@@ -563,7 +601,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         nonWorkSeconds: 0,
         subpathBreakdown: { searchJobs: 0, proposals: 0, messages: 0, jobDetails: 0, otherUpwork: 0 }
       };
-      await chrome.storage.local.set({ todayMetrics: emptyMetrics });
+      const session = store.session;
+      if (session && session.status === "active") {
+        session.clockInTime = new Date().toISOString();
+        session.totalClockedSeconds = 0;
+        session.totalActiveSeconds = 0;
+        session.totalIdleSeconds = 0;
+        session.totalUpworkSeconds = 0;
+        session.totalOtherWorkSeconds = 0;
+        session.totalNonWorkSeconds = 0;
+      }
+      await chrome.storage.local.set({ 
+        session: session || null, 
+        todayMetrics: emptyMetrics, 
+        lastHeartbeatTime: Date.now() 
+      });
       sendResponse({ success: true, todayMetrics: emptyMetrics });
     } else if (request.type === "TRIGGER_SYNC") {
       await flushOfflineQueue(config.apiBaseUrl);

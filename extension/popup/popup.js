@@ -147,19 +147,36 @@ function renderState(state) {
 
   // Render Metrics
   if (todayMetrics) {
-    metricClocked.textContent = formatMinutes(todayMetrics.clockedSeconds);
-    metricUpwork.textContent = formatMinutes(todayMetrics.upworkSeconds);
-    metricIdle.textContent = formatMinutes(todayMetrics.idleSeconds);
+    let displayClocked = todayMetrics.clockedSeconds || 0;
+    let displayUpwork = todayMetrics.upworkSeconds || 0;
+    let displayIdle = todayMetrics.idleSeconds || 0;
 
-    const totalActive = todayMetrics.activeSeconds || 0;
-    const upworkSecs = todayMetrics.upworkSeconds || 0;
-    const rate = totalActive > 0 ? Math.round((upworkSecs / totalActive) * 100) : 0;
+    // If session is active, ensure displayed shift metrics never exceed the active elapsed time
+    if (session && session.status === "active" && session.clockInTime) {
+      const activeElapsed = Math.max(0, Math.floor((Date.now() - new Date(session.clockInTime).getTime()) / 1000));
+      displayClocked = Math.max(displayClocked, activeElapsed);
+      displayUpwork = Math.min(displayUpwork, displayClocked);
+      displayIdle = Math.min(displayIdle, displayClocked);
+    } else {
+      displayUpwork = Math.min(displayUpwork, displayClocked);
+      displayIdle = Math.min(displayIdle, displayClocked);
+    }
+
+    metricClocked.textContent = formatMinutes(displayClocked);
+    metricUpwork.textContent = formatMinutes(displayUpwork);
+    metricIdle.textContent = formatMinutes(displayIdle);
+
+    const rate = displayClocked > 0 ? Math.min(100, Math.round((displayUpwork / displayClocked) * 100)) : 0;
     upworkRateBadge.textContent = `${rate}% Upwork`;
 
     if (todayMetrics.subpathBreakdown) {
-      chipSearch.textContent = `Jobs: ${formatMinutes(todayMetrics.subpathBreakdown.searchJobs)}`;
-      chipProposals.textContent = `Proposals: ${formatMinutes(todayMetrics.subpathBreakdown.proposals)}`;
-      chipMessages.textContent = `Messages: ${formatMinutes(todayMetrics.subpathBreakdown.messages)}`;
+      const searchJobs = Math.min(todayMetrics.subpathBreakdown.searchJobs || 0, displayUpwork);
+      const proposals = Math.min(todayMetrics.subpathBreakdown.proposals || 0, displayUpwork);
+      const messages = Math.min(todayMetrics.subpathBreakdown.messages || 0, displayUpwork);
+
+      chipSearch.textContent = `Jobs: ${formatMinutes(searchJobs)}`;
+      chipProposals.textContent = `Proposals: ${formatMinutes(proposals)}`;
+      chipMessages.textContent = `Messages: ${formatMinutes(messages)}`;
     }
   }
 

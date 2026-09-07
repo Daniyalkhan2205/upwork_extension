@@ -405,6 +405,13 @@ class DatabaseStore {
       }
     }
 
+    // Mathematical safety bounds: sub-metrics can never exceed total clocked duration
+    if (session.totalClockedSeconds > 0) {
+      session.totalActiveSeconds = Math.min(session.totalActiveSeconds, session.totalClockedSeconds);
+      session.totalIdleSeconds   = Math.min(session.totalIdleSeconds, session.totalClockedSeconds);
+      session.totalUpworkSeconds = Math.min(session.totalUpworkSeconds, session.totalActiveSeconds);
+    }
+
     // ✅ Persist updated session totals to Supabase on every heartbeat tick
     if (supabase && session.userId) {
       supabase
