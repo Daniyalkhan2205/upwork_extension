@@ -5,7 +5,7 @@ import { logWebhookEvent, sendTelegramAlert } from "@/lib/telegram";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const session = db.clockIn({
+    const session = await db.clockIn({
       id: body.id,
       bidderCode: body.bidderCode || "BIDDER_01",
       bidderName: body.bidderName || "Alex Mercer",

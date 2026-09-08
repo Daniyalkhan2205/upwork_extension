@@ -10,7 +10,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, message: "bidderCode is required" }, { status: 400 });
     }
 
-    const session = db.applyHeartbeat(packet);
+    const session = await db.applyHeartbeat(packet);
 
     return NextResponse.json({
       success: true,

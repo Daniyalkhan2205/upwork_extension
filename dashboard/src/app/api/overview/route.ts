@@ -7,10 +7,10 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const date = searchParams.get("date") || new Date().toISOString().slice(0, 10);
 
-    const users = db.getUsers();
-    const sessions = db.getSessions(date);
-    const kpis = db.getKpis(date);
-    const domainLogs = db.getDomainLogs(date);
+    const users = await db.getUsers();
+    const sessions = await db.getSessions(date);
+    const kpis = await db.getKpis(date);
+    const domainLogs = await db.getDomainLogs(date);
 
     let agencyClocked = 0;
     let agencyActive = 0;

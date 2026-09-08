@@ -6,7 +6,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const bidderCode = body.bidderCode || "BIDDER_01";
-    const session = db.clockOut(bidderCode, body);
+    const session = await db.clockOut(bidderCode, body);
 
     if (!session) {
       return NextResponse.json({ success: false, message: "No active session found for bidder." }, { status: 404 });

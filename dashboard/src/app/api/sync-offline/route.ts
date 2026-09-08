@@ -11,13 +11,13 @@ export async function POST(req: Request) {
     let processedCount = 0;
     for (const item of items) {
       if (item.type === "clock_in") {
-        db.clockIn(item.data);
+        await db.clockIn(item.data);
         processedCount++;
       } else if (item.type === "clock_out") {
-        db.clockOut(item.data.bidderCode, item.data);
+        await db.clockOut(item.data.bidderCode, item.data);
         processedCount++;
       } else if (item.type === "heartbeat") {
-        db.applyHeartbeat(item.data);
+        await db.applyHeartbeat(item.data);
         processedCount++;
       }
     }

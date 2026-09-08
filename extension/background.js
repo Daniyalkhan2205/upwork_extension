@@ -511,8 +511,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     } else if (request.type === "CLOCK_IN") {
       const now = new Date();
+      const sessionId = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+        ? crypto.randomUUID()
+        : ("xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === "x" ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          }));
+
       const newSession = {
-        id: "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+        id: sessionId,
         bidderCode: config.bidderCode,
         bidderName: config.bidderName,
         clockInTime: now.toISOString(),
@@ -539,11 +547,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       // Notify backend & manager via webhook
       try {
-        await fetch(`${config.apiBaseUrl}/session/clock-in`, {
+        const res = await fetch(`${config.apiBaseUrl}/session/clock-in`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(newSession)
         });
+        if (res.ok) {
+          const resJson = await res.json();
+          if (resJson.session && resJson.session.id) {
+            newSession.id = resJson.session.id;
+            await chrome.storage.local.set({ session: newSession });
+          }
+        }
       } catch (err) {
         console.warn("Clock-in offline, saving to offline queue");
         const q = (await chrome.storage.local.get("offlineQueue")).offlineQueue || [];

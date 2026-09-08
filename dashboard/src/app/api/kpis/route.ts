@@ -7,7 +7,7 @@ export async function GET(req: Request) {
     const date = searchParams.get("date") || undefined;
     const bidderCode = searchParams.get("bidderCode") || undefined;
 
-    const kpis = db.getKpis(date, bidderCode);
+    const kpis = await db.getKpis(date, bidderCode);
     return NextResponse.json({ success: true, kpis });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
@@ -23,8 +23,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, message: "bidderCode is required" }, { status: 400 });
     }
 
-    const user = db.getUserByCode(bidderCode);
-    const savedKpi = db.saveKpi({
+    const user = await db.getUserByCode(bidderCode);
+    const savedKpi = await db.saveKpi({
       userId: user ? user.id : "user_" + bidderCode,
       bidderCode,
       date: date || new Date().toISOString().slice(0, 10),
